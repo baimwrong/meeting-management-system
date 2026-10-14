@@ -1,0 +1,36 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('meeting_rooms', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('code', 50)->unique();
+            $table->string('floor_location');
+            $table->unsignedInteger('capacity')->default(10);
+            $table->json('equipment')->nullable();
+            $table->decimal('hourly_rate', 10, 2)->default(0.00);
+            $table->string('image_url')->nullable();
+            $table->string('status', 30)->default('available')->index();
+            $table->text('notes')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('meeting_rooms');
+    }
+};
