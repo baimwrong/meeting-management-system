@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Department;
 use App\Models\Meeting;
-use App\Models\MeetingAgenda;
 use App\Models\MeetingAttendee;
 use App\Models\MeetingRoom;
 use App\Models\User;
@@ -59,8 +58,8 @@ class MeetingController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
-                  ->orWhere('meeting_code', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+                    ->orWhere('meeting_code', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%");
             });
         }
 
@@ -107,6 +106,20 @@ class MeetingController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        if ($request->has('attendees') && is_array($request->attendees)) {
+            $filteredAttendees = array_values(array_filter($request->attendees, function ($att) {
+                return is_array($att) && ! empty($att['user_id']);
+            }));
+            $request->merge(['attendees' => $filteredAttendees]);
+        }
+
+        if ($request->has('agendas') && is_array($request->agendas)) {
+            $filteredAgendas = array_values(array_filter($request->agendas, function ($ag) {
+                return is_array($ag) && ! empty($ag['title']);
+            }));
+            $request->merge(['agendas' => $filteredAgendas]);
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -130,22 +143,22 @@ class MeetingController extends Controller
         ]);
 
         // Room conflict validation
-        if (!empty($validated['room_id'])) {
+        if (! empty($validated['room_id'])) {
             $conflictCheck = $this->roomService->checkRoomAvailability(
                 $validated['room_id'],
                 $validated['meeting_date'],
-                $validated['start_time'] . ':00',
-                $validated['end_time'] . ':00'
+                $validated['start_time'].':00',
+                $validated['end_time'].':00'
             );
 
-            if (!$conflictCheck['available']) {
+            if (! $conflictCheck['available']) {
                 return back()->withInput()->withErrors([
                     'room_id' => $conflictCheck['message'],
                 ]);
             }
         }
 
-        $meetingCode = 'MTG-' . Carbon::parse($validated['meeting_date'])->format('Ymd') . '-' . strtoupper(Str::random(4));
+        $meetingCode = 'MTG-'.Carbon::parse($validated['meeting_date'])->format('Ymd').'-'.strtoupper(Str::random(4));
 
         DB::beginTransaction();
         try {
@@ -159,8 +172,8 @@ class MeetingController extends Controller
                 'department_id' => $validated['department_id'] ?? Auth::user()->department_id,
                 'virtual_link' => $validated['virtual_link'] ?? null,
                 'meeting_date' => $validated['meeting_date'],
-                'start_time' => $validated['start_time'] . ':00',
-                'end_time' => $validated['end_time'] . ':00',
+                'start_time' => $validated['start_time'].':00',
+                'end_time' => $validated['end_time'].':00',
                 'is_confidential' => $request->boolean('is_confidential'),
                 'status' => 'scheduled',
             ]);
@@ -173,7 +186,7 @@ class MeetingController extends Controller
             ]);
 
             // Add Invitees
-            if (!empty($validated['attendees'])) {
+            if (! empty($validated['attendees'])) {
                 foreach ($validated['attendees'] as $attendeeData) {
                     if ((int) $attendeeData['user_id'] !== Auth::id()) {
                         $meeting->attendees()->firstOrCreate(
@@ -189,7 +202,7 @@ class MeetingController extends Controller
             }
 
             // Add Agendas
-            if (!empty($validated['agendas'])) {
+            if (! empty($validated['agendas'])) {
                 $orderIndex = 1;
                 foreach ($validated['agendas'] as $agendaData) {
                     $meeting->agendas()->create([
@@ -204,7 +217,8 @@ class MeetingController extends Controller
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
-            return back()->withInput()->with('error', 'Failed to schedule meeting: ' . $e->getMessage());
+
+            return back()->withInput()->with('error', 'Failed to schedule meeting: '.$e->getMessage());
         }
 
         return redirect()->route('meetings.show', $meeting)
@@ -213,6 +227,8 @@ class MeetingController extends Controller
 
     public function show(Meeting $meeting): View
     {
+        $this->authorizeMeetingAccess($meeting);
+
         $meeting->load([
             'room',
             'organizer.department',
@@ -247,6 +263,20 @@ class MeetingController extends Controller
     {
         $this->authorizeOrganizerOrAdmin($meeting);
 
+        if ($request->has('attendees') && is_array($request->attendees)) {
+            $filteredAttendees = array_values(array_filter($request->attendees, function ($att) {
+                return is_array($att) && ! empty($att['user_id']);
+            }));
+            $request->merge(['attendees' => $filteredAttendees]);
+        }
+
+        if ($request->has('agendas') && is_array($request->agendas)) {
+            $filteredAgendas = array_values(array_filter($request->agendas, function ($ag) {
+                return is_array($ag) && ! empty($ag['title']);
+            }));
+            $request->merge(['agendas' => $filteredAgendas]);
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -259,38 +289,91 @@ class MeetingController extends Controller
             'end_time' => 'required|date_format:H:i|after:start_time',
             'is_confidential' => 'nullable|boolean',
             'status' => 'required|in:scheduled,in_progress,completed,rescheduled,cancelled',
+            'agendas' => 'nullable|array',
+            'agendas.*.title' => 'required|string|max:255',
+            'agendas.*.duration_minutes' => 'required|integer|min:1',
+            'agendas.*.presenter_id' => 'nullable|exists:users,id',
+            'attendees' => 'nullable|array',
+            'attendees.*.user_id' => 'required|exists:users,id',
+            'attendees.*.role' => 'required|in:required,optional,presenter',
         ]);
 
         // Conflict check
-        if (!empty($validated['room_id'])) {
+        if (! empty($validated['room_id'])) {
             $conflictCheck = $this->roomService->checkRoomAvailability(
                 $validated['room_id'],
                 $validated['meeting_date'],
-                $validated['start_time'] . ':00',
-                $validated['end_time'] . ':00',
+                $validated['start_time'].':00',
+                $validated['end_time'].':00',
                 $meeting->id
             );
 
-            if (!$conflictCheck['available']) {
+            if (! $conflictCheck['available']) {
                 return back()->withInput()->withErrors([
                     'room_id' => $conflictCheck['message'],
                 ]);
             }
         }
 
-        $meeting->update([
-            'title' => $validated['title'],
-            'description' => $validated['description'] ?? null,
-            'meeting_type' => $validated['meeting_type'],
-            'room_id' => $validated['room_id'] ?? null,
-            'department_id' => $validated['department_id'] ?? null,
-            'virtual_link' => $validated['virtual_link'] ?? null,
-            'meeting_date' => $validated['meeting_date'],
-            'start_time' => $validated['start_time'] . ':00',
-            'end_time' => $validated['end_time'] . ':00',
-            'status' => $validated['status'],
-            'is_confidential' => $request->boolean('is_confidential'),
-        ]);
+        DB::beginTransaction();
+        try {
+            $meeting->update([
+                'title' => $validated['title'],
+                'description' => $validated['description'] ?? null,
+                'meeting_type' => $validated['meeting_type'],
+                'room_id' => $validated['room_id'] ?? null,
+                'department_id' => $validated['department_id'] ?? null,
+                'virtual_link' => $validated['virtual_link'] ?? null,
+                'meeting_date' => $validated['meeting_date'],
+                'start_time' => $validated['start_time'].':00',
+                'end_time' => $validated['end_time'].':00',
+                'status' => $validated['status'],
+                'is_confidential' => $request->boolean('is_confidential'),
+            ]);
+
+            // Sync attendees if provided
+            if ($request->has('attendees')) {
+                $submittedUserIds = collect($validated['attendees'] ?? [])->pluck('user_id')->map(fn ($id) => (int) $id)->all();
+
+                // Remove unselected attendees (except organizer)
+                $meeting->attendees()->where('user_id', '!=', $meeting->organizer_id)
+                    ->whereNotIn('user_id', $submittedUserIds)
+                    ->delete();
+
+                // Add or update attendees
+                foreach ($validated['attendees'] ?? [] as $attData) {
+                    if ((int) $attData['user_id'] !== (int) $meeting->organizer_id) {
+                        $attendee = $meeting->attendees()->firstOrNew(['user_id' => $attData['user_id']]);
+                        $attendee->role = $attData['role'];
+                        if (! $attendee->exists) {
+                            $attendee->rsvp_status = 'pending';
+                            $attendee->attendance_status = 'unmarked';
+                        }
+                        $attendee->save();
+                    }
+                }
+            }
+
+            // Sync agendas if provided
+            if ($request->has('agendas')) {
+                $meeting->agendas()->delete();
+                $orderIndex = 1;
+                foreach ($validated['agendas'] ?? [] as $agendaData) {
+                    $meeting->agendas()->create([
+                        'title' => $agendaData['title'],
+                        'duration_minutes' => $agendaData['duration_minutes'],
+                        'presenter_id' => $agendaData['presenter_id'] ?? null,
+                        'order_index' => $orderIndex++,
+                    ]);
+                }
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()->withInput()->with('error', 'Failed to update meeting: '.$e->getMessage());
+        }
 
         return redirect()->route('meetings.show', $meeting)
             ->with('success', 'Meeting details updated successfully.');
@@ -335,11 +418,13 @@ class MeetingController extends Controller
         $meeting->update(['status' => $validated['status']]);
 
         return redirect()->route('meetings.show', $meeting)
-            ->with('success', "Meeting status updated to " . ucfirst(str_replace('_', ' ', $validated['status'])));
+            ->with('success', 'Meeting status updated to '.ucfirst(str_replace('_', ' ', $validated['status'])));
     }
 
     public function updateRsvp(Request $request, Meeting $meeting): RedirectResponse
     {
+        $this->authorizeMeetingAccess($meeting);
+
         $validated = $request->validate([
             'rsvp_status' => 'required|in:accepted,declined,tentative',
             'notes' => 'nullable|string|max:255',
@@ -391,8 +476,8 @@ class MeetingController extends Controller
         $check = $this->roomService->checkRoomAvailability(
             $request->room_id,
             $request->date,
-            $request->start_time . ':00',
-            $request->end_time . ':00',
+            $request->start_time.':00',
+            $request->end_time.':00',
             $request->exclude_meeting_id
         );
 
@@ -402,8 +487,26 @@ class MeetingController extends Controller
     protected function authorizeOrganizerOrAdmin(Meeting $meeting): void
     {
         $user = Auth::user();
-        if (!$user->isAdmin() && $meeting->organizer_id !== $user->id) {
+        if (! $user->isAdmin() && $meeting->organizer_id !== $user->id) {
             abort(403, 'Unauthorized. Only the meeting organizer or an administrator can modify this meeting.');
         }
+    }
+
+    protected function authorizeMeetingAccess(Meeting $meeting): void
+    {
+        if (! $meeting->is_confidential) {
+            return;
+        }
+
+        $user = Auth::user();
+        if ($user->isAdmin() || $meeting->organizer_id === $user->id) {
+            return;
+        }
+
+        if ($meeting->attendees()->where('user_id', $user->id)->exists()) {
+            return;
+        }
+
+        abort(403, 'Unauthorized access. This meeting is confidential.');
     }
 }

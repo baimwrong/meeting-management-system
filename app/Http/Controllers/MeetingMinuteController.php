@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Meeting;
-use App\Models\MeetingMinute;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,6 +13,11 @@ class MeetingMinuteController extends Controller
 {
     public function store(Request $request, Meeting $meeting): RedirectResponse
     {
+        $user = Auth::user();
+        if (! $user->isAdmin() && $meeting->organizer_id !== $user->id) {
+            abort(403, 'Unauthorized. Only the meeting organizer or an administrator can record or update meeting minutes.');
+        }
+
         $validated = $request->validate([
             'summary' => 'required|string',
             'key_decisions' => 'nullable|string',
@@ -37,6 +41,14 @@ class MeetingMinuteController extends Controller
 
     public function printView(Meeting $meeting): View
     {
+        if ($meeting->is_confidential) {
+            $user = Auth::user();
+            $isAttendee = $meeting->attendees()->where('user_id', $user->id)->exists();
+            if (! $user->isAdmin() && $meeting->organizer_id !== $user->id && ! $isAttendee) {
+                abort(403, 'Unauthorized. You do not have permission to view minutes for this confidential meeting.');
+            }
+        }
+
         $meeting->load([
             'room',
             'organizer.department',

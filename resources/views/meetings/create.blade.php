@@ -143,18 +143,25 @@
                     <p class="small text-muted mb-2">Select staff members to invite and define their participation role.</p>
                     <div style="max-height: 400px; overflow-y: auto;" class="border rounded p-2">
                         @foreach($users as $index => $user)
+                            @php
+                                $isAuth = $user->id === Auth::id();
+                                $isChecked = $isAuth || old("attendees.{$index}.user_id") == $user->id;
+                            @endphp
                             <div class="d-flex align-items-center justify-content-between p-2 border-bottom">
                                 <div class="form-check m-0">
-                                    <input class="form-check-input" type="checkbox" name="attendees[{{ $index }}][user_id]" value="{{ $user->id }}" id="user_{{ $user->id }}" {{ $user->id === Auth::id() ? 'checked disabled' : '' }}>
+                                    <input class="form-check-input attendee-checkbox" type="checkbox" name="attendees[{{ $index }}][user_id]" value="{{ $user->id }}" id="user_{{ $user->id }}" {{ $isChecked ? 'checked' : '' }} {{ $isAuth ? 'disabled' : '' }} onchange="const sel = document.getElementById('role_{{ $user->id }}'); if (sel) { sel.disabled = !this.checked; }">
                                     <label class="form-check-label small fw-semibold ms-1" for="user_{{ $user->id }}">
                                         {{ $user->name }}
+                                        @if($isAuth)
+                                            <span class="badge bg-primary-subtle text-primary ms-1" style="font-size: 0.7rem;">Host</span>
+                                        @endif
                                         <div class="text-muted" style="font-size: 0.75rem;">{{ $user->job_title ?? ($user->department ? $user->department->name : 'Staff') }}</div>
                                     </label>
                                 </div>
-                                <select name="attendees[{{ $index }}][role]" class="form-select form-select-sm w-auto py-0 px-2" style="font-size: 0.8rem;">
-                                    <option value="required" selected>Required</option>
-                                    <option value="optional">Optional</option>
-                                    <option value="presenter">Presenter</option>
+                                <select name="attendees[{{ $index }}][role]" id="role_{{ $user->id }}" class="form-select form-select-sm w-auto py-0 px-2" style="font-size: 0.8rem;" {{ (!$isChecked || $isAuth) ? 'disabled' : '' }}>
+                                    <option value="required" {{ old("attendees.{$index}.role", 'required') === 'required' ? 'selected' : '' }}>Required</option>
+                                    <option value="optional" {{ old("attendees.{$index}.role") === 'optional' ? 'selected' : '' }}>Optional</option>
+                                    <option value="presenter" {{ old("attendees.{$index}.role") === 'presenter' ? 'selected' : '' }}>Presenter</option>
                                 </select>
                             </div>
                         @endforeach

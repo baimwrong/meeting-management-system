@@ -105,6 +105,7 @@ class Meeting extends Model
     {
         $start = Carbon::parse($this->start_time)->format('h:i A');
         $end = Carbon::parse($this->end_time)->format('h:i A');
+
         return "{$start} - {$end}";
     }
 
@@ -117,22 +118,24 @@ class Meeting extends Model
     {
         return $query->where(function ($q) {
             $q->whereDate('meeting_date', '>', Carbon::today())
-              ->orWhere(function ($sub) {
-                  $sub->whereDate('meeting_date', Carbon::today())
-                      ->where('end_time', '>=', Carbon::now()->format('H:i:s'));
-              });
+                ->orWhere(function ($sub) {
+                    $sub->whereDate('meeting_date', Carbon::today())
+                        ->where('end_time', '>=', Carbon::now()->format('H:i:s'));
+                });
         })->whereIn('status', ['scheduled', 'in_progress', 'rescheduled']);
     }
 
     public function scopePast(Builder $query): Builder
     {
         return $query->where(function ($q) {
-            $q->whereDate('meeting_date', '<', Carbon::today())
-              ->orWhere(function ($sub) {
-                  $sub->whereDate('meeting_date', Carbon::today())
-                      ->where('end_time', '<', Carbon::now()->format('H:i:s'));
-              });
-        })->orWhere('status', 'completed');
+            $q->where(function ($subDate) {
+                $subDate->whereDate('meeting_date', '<', Carbon::today())
+                    ->orWhere(function ($subTime) {
+                        $subTime->whereDate('meeting_date', Carbon::today())
+                            ->where('end_time', '<', Carbon::now()->format('H:i:s'));
+                    });
+            })->orWhere('status', 'completed');
+        });
     }
 
     public function scopeForUser(Builder $query, User $user): Builder
@@ -143,9 +146,9 @@ class Meeting extends Model
 
         return $query->where(function ($q) use ($user) {
             $q->where('organizer_id', $user->id)
-              ->orWhereHas('attendees', function ($att) use ($user) {
-                  $att->where('user_id', $user->id);
-              });
+                ->orWhereHas('attendees', function ($att) use ($user) {
+                    $att->where('user_id', $user->id);
+                });
         });
     }
 }

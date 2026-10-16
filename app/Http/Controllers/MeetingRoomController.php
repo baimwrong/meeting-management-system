@@ -7,6 +7,7 @@ use App\Models\MeetingRoom;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
 class MeetingRoomController extends Controller
@@ -27,8 +28,8 @@ class MeetingRoomController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%")
-                  ->orWhere('floor_location', 'like', "%{$search}%");
+                    ->orWhere('code', 'like', "%{$search}%")
+                    ->orWhere('floor_location', 'like', "%{$search}%");
             });
         }
 
@@ -39,11 +40,15 @@ class MeetingRoomController extends Controller
 
     public function create(): View
     {
+        $this->authorizeOrganizerOrAdmin();
+
         return view('rooms.create');
     }
 
     public function store(Request $request): RedirectResponse
     {
+        $this->authorizeOrganizerOrAdmin();
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:meeting_rooms,code',
@@ -56,7 +61,7 @@ class MeetingRoomController extends Controller
         ]);
 
         $equipmentList = [];
-        if (!empty($validated['equipment_string'])) {
+        if (! empty($validated['equipment_string'])) {
             $parts = explode(',', $validated['equipment_string']);
             $equipmentList = array_values(array_filter(array_map('trim', $parts)));
         }
@@ -101,14 +106,18 @@ class MeetingRoomController extends Controller
 
     public function edit(MeetingRoom $room): View
     {
+        $this->authorizeOrganizerOrAdmin();
+
         return view('rooms.edit', compact('room'));
     }
 
     public function update(Request $request, MeetingRoom $room): RedirectResponse
     {
+        $this->authorizeOrganizerOrAdmin();
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:meeting_rooms,code,' . $room->id,
+            'code' => 'required|string|max:50|unique:meeting_rooms,code,'.$room->id,
             'floor_location' => 'required|string|max:255',
             'capacity' => 'required|integer|min:1',
             'equipment_string' => 'nullable|string',
@@ -118,7 +127,7 @@ class MeetingRoomController extends Controller
         ]);
 
         $equipmentList = [];
-        if (!empty($validated['equipment_string'])) {
+        if (! empty($validated['equipment_string'])) {
             $parts = explode(',', $validated['equipment_string']);
             $equipmentList = array_values(array_filter(array_map('trim', $parts)));
         }
@@ -140,6 +149,8 @@ class MeetingRoomController extends Controller
 
     public function destroy(MeetingRoom $room): RedirectResponse
     {
+        $this->authorizeAdmin();
+
         $hasActiveMeetings = Meeting::where('room_id', $room->id)
             ->where('meeting_date', '>=', Carbon::today()->toDateString())
             ->whereIn('status', ['scheduled', 'in_progress'])
@@ -154,5 +165,19 @@ class MeetingRoomController extends Controller
 
         return redirect()->route('rooms.index')
             ->with('success', "Meeting Room '{$name}' has been deleted.");
+    }
+
+    protected function authorizeOrganizerOrAdmin(): void
+    {
+        if (! Auth::user()->isOrganizer()) {
+            abort(403, 'Unauthorized. Only organizers and administrators can create or edit meeting rooms.');
+        }
+    }
+
+    protected function authorizeAdmin(): void
+    {
+        if (! Auth::user()->isAdmin()) {
+            abort(403, 'Unauthorized. Only administrators can delete meeting rooms.');
+        }
     }
 }

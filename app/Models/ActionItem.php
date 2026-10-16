@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -66,6 +65,6 @@ class ActionItem extends Model
             return false;
         }
 
-        return $this->due_date->isPast();
+        return $this->due_date->endOfDay()->isPast();
     }
 }

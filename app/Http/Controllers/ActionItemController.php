@@ -21,7 +21,7 @@ class ActionItemController extends Controller
 
         // Filter: default to assigned to me unless 'all' is requested and user has rights
         $scope = $request->input('scope', 'mine');
-        if ($scope === 'mine' || !$user->isOrganizer()) {
+        if ($scope === 'mine' || ! $user->isOrganizer()) {
             $query->where('assigned_to_id', $user->id);
         }
 
@@ -35,7 +35,7 @@ class ActionItemController extends Controller
 
         if ($request->filled('overdue') && $request->overdue == '1') {
             $query->where('due_date', '<', Carbon::today()->toDateString())
-                  ->whereNotIn('status', ['completed', 'cancelled']);
+                ->whereNotIn('status', ['completed', 'cancelled']);
         }
 
         $actionItems = $query->orderBy('due_date')->paginate(15)->withQueryString();
@@ -47,6 +47,12 @@ class ActionItemController extends Controller
 
     public function store(Request $request, Meeting $meeting): RedirectResponse
     {
+        $user = Auth::user();
+        $isAttendee = $meeting->attendees()->where('user_id', $user->id)->exists();
+        if (! $user->isAdmin() && $meeting->organizer_id !== $user->id && ! $isAttendee) {
+            abort(403, 'Unauthorized. Only meeting organizers or attendees can add action items.');
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -69,6 +75,13 @@ class ActionItemController extends Controller
 
     public function updateStatus(Request $request, ActionItem $actionItem): RedirectResponse
     {
+        $user = Auth::user();
+        $isAssignee = $actionItem->assigned_to_id === $user->id;
+        $isOrganizer = $actionItem->meeting && $actionItem->meeting->organizer_id === $user->id;
+        if (! $user->isAdmin() && ! $isAssignee && ! $isOrganizer) {
+            abort(403, 'Unauthorized. You can only update action items assigned to you or from meetings you organize.');
+        }
+
         $validated = $request->validate([
             'status' => 'required|in:pending,in_progress,completed,cancelled',
         ]);
@@ -80,12 +93,19 @@ class ActionItemController extends Controller
             'completed_at' => $completedAt,
         ]);
 
-        return back()->with('success', "Action item marked as " . ucfirst(str_replace('_', ' ', $validated['status'])));
+        return back()->with('success', 'Action item marked as '.ucfirst(str_replace('_', ' ', $validated['status'])));
     }
 
     public function destroy(ActionItem $actionItem): RedirectResponse
     {
+        $user = Auth::user();
+        $isOrganizer = $actionItem->meeting && $actionItem->meeting->organizer_id === $user->id;
+        if (! $user->isAdmin() && ! $isOrganizer) {
+            abort(403, 'Unauthorized. Only the meeting organizer or an administrator can delete action items.');
+        }
+
         $actionItem->delete();
+
         return back()->with('success', 'Action item deleted successfully.');
     }
 }
